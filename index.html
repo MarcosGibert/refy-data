@@ -1,0 +1,697 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <title>Journal Stats</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Serif+Display&family=DM+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.js"></script>
+  <style>
+    :root {
+      --bg:       #0f0f13;
+      --surface:  #17171e;
+      --card:     #1e1e28;
+      --border:   rgba(255,255,255,0.07);
+      --txt:      #f0efe8;
+      --muted:    #7a7a8c;
+      --accent:   #c8b560;
+      --accent2:  #6c8ebf;
+      --accent3:  #b56c8e;
+      --good:     #6cbf8e;
+      --bad:      #bf6c6c;
+      --radius:   14px;
+      --font-display: 'DM Serif Display', serif;
+      --font-body:    'DM Sans', sans-serif;
+    }
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background: var(--bg);
+      color: var(--txt);
+      font-family: var(--font-body);
+      min-height: 100vh;
+      padding: 0 0 80px;
+    }
+
+    /* ── HEADER ── */
+    .header {
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+      padding: 24px 32px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 20px;
+      flex-wrap: wrap;
+      position: sticky;
+      top: 0;
+      z-index: 100;
+    }
+    .header-left h1 {
+      font-family: var(--font-display);
+      font-size: 26px;
+      letter-spacing: -0.3px;
+      color: var(--accent);
+    }
+    .header-left p { font-size: 13px; color: var(--muted); margin-top: 2px; }
+    .header-right { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+
+    /* ── CONTROLS ── */
+    .btn {
+      font-family: var(--font-body);
+      font-size: 13px;
+      font-weight: 600;
+      padding: 9px 18px;
+      border-radius: 8px;
+      border: 1px solid var(--border);
+      background: var(--card);
+      color: var(--txt);
+      cursor: pointer;
+      transition: background .15s, border-color .15s;
+    }
+    .btn:hover { background: #2a2a36; border-color: rgba(255,255,255,0.15); }
+    .btn.primary { background: var(--accent); color: #0f0f13; border-color: var(--accent); }
+    .btn.primary:hover { background: #d9c870; }
+
+    .year-selector {
+      display: flex;
+      gap: 6px;
+      align-items: center;
+    }
+    .year-btn {
+      font-family: var(--font-body);
+      font-size: 13px;
+      font-weight: 600;
+      padding: 8px 16px;
+      border-radius: 8px;
+      border: 1px solid var(--border);
+      background: var(--card);
+      color: var(--muted);
+      cursor: pointer;
+      transition: all .15s;
+    }
+    .year-btn.active {
+      background: var(--accent);
+      color: #0f0f13;
+      border-color: var(--accent);
+    }
+    .year-btn:hover:not(.active) { background: #2a2a36; color: var(--txt); }
+
+    /* ── EMPTY STATE ── */
+    .empty-state {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 100px 40px;
+      text-align: center;
+      gap: 16px;
+    }
+    .empty-state .icon { font-size: 56px; opacity: .4; }
+    .empty-state h2 { font-family: var(--font-display); font-size: 24px; color: var(--muted); }
+    .empty-state p { font-size: 14px; color: var(--muted); max-width: 340px; line-height: 1.6; }
+
+    /* ── MAIN GRID ── */
+    .main { padding: 32px; display: flex; flex-direction: column; gap: 40px; }
+
+    /* ── SECTION ── */
+    .section-title {
+      font-family: var(--font-display);
+      font-size: 20px;
+      color: var(--accent);
+      margin-bottom: 20px;
+      padding-bottom: 10px;
+      border-bottom: 1px solid var(--border);
+    }
+
+    /* ── TABLE ── */
+    .table-chart-block {
+      display: grid;
+      grid-template-columns: 1fr 1.4fr;
+      gap: 20px;
+      align-items: start;
+    }
+    @media (max-width: 900px) {
+      .table-chart-block { grid-template-columns: 1fr; }
+    }
+
+    .data-table-wrap {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      overflow: hidden;
+    }
+    .data-table-title {
+      padding: 14px 18px;
+      font-size: 12px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: .8px;
+      color: var(--muted);
+      border-bottom: 1px solid var(--border);
+      background: rgba(255,255,255,.02);
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 13px;
+    }
+    th {
+      padding: 10px 12px;
+      text-align: left;
+      font-size: 11px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: .5px;
+      color: var(--muted);
+      border-bottom: 1px solid var(--border);
+    }
+    td {
+      padding: 9px 12px;
+      border-bottom: 1px solid rgba(255,255,255,0.03);
+      white-space: nowrap;
+    }
+    tr:last-child td { border-bottom: none; }
+    tr:hover td { background: rgba(255,255,255,0.02); }
+    td.month-col { color: var(--muted); font-size: 12px; font-weight: 600; }
+    td.val { font-variant-numeric: tabular-nums; }
+    td.val-accent { color: var(--accent); font-weight: 600; }
+    td.bar-cell { width: 120px; }
+    .mini-bar-bg { background: rgba(255,255,255,0.06); border-radius: 3px; height: 6px; }
+    .mini-bar-fill { height: 6px; border-radius: 3px; background: var(--accent); transition: width .4s; }
+
+    /* multi-col tables (emotions/activities) */
+    .multi-table th, .multi-table td { padding: 8px 10px; font-size: 12px; }
+    .multi-table th:first-child, .multi-table td:first-child { position: sticky; left: 0; background: var(--card); z-index:1; }
+    .scroll-x { overflow-x: auto; }
+
+    /* ── CHART CARD ── */
+    .chart-card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 20px;
+    }
+    .chart-card-title {
+      font-size: 12px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: .8px;
+      color: var(--muted);
+      margin-bottom: 16px;
+    }
+    .chart-wrap { position: relative; height: 260px; }
+    .chart-wrap-tall { position: relative; height: 320px; }
+
+    /* heatmap */
+    .emotion-heatmap { display: flex; flex-direction: column; gap: 4px; }
+    .heatmap-row { display: flex; gap: 4px; align-items: center; }
+    .heatmap-label { font-size: 11px; color: var(--muted); width: 130px; flex-shrink: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .heatmap-cells { display: flex; gap: 3px; }
+    .heatmap-cell {
+      width: 22px; height: 22px; border-radius: 4px;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 9px; font-weight: 600; color: rgba(255,255,255,0.6);
+      cursor: default;
+    }
+
+    /* ── SUMMARY PILLS ── */
+    .summary-row {
+      display: flex;
+      gap: 12px;
+      flex-wrap: wrap;
+      margin-bottom: 32px;
+    }
+    .summary-pill {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 14px 20px;
+      flex: 1;
+      min-width: 120px;
+    }
+    .pill-value { font-family: var(--font-display); font-size: 28px; color: var(--accent); }
+    .pill-label { font-size: 11px; color: var(--muted); font-weight: 600; text-transform: uppercase; letter-spacing: .5px; margin-top: 2px; }
+
+    input[type=file] { display: none; }
+  </style>
+</head>
+<body>
+
+<div class="header">
+  <div class="header-left">
+    <h1>Journal Stats</h1>
+    <p id="headerSub">Importa tu diario para empezar</p>
+  </div>
+  <div class="header-right">
+    <div class="year-selector" id="yearSelector"></div>
+    <input type="file" id="fileInput" accept=".json">
+    <button class="btn primary" onclick="document.getElementById('fileInput').click()">📂 Importar JSON</button>
+  </div>
+</div>
+
+<div id="appContent">
+  <div class="empty-state">
+    <div class="icon">📊</div>
+    <h2>Sin datos</h2>
+    <p>Importa el JSON exportado desde tu diario para visualizar los resúmenes anuales.</p>
+  </div>
+</div>
+
+<script>
+(function() {
+  "use strict";
+
+  var MONTHS = ["Ene","Feb","Mar","Abr","May","Jun","Jul","Ago","Sep","Oct","Nov","Dic"];
+  var MONTHS_FULL = ["Enero","Febrero","Marzo","Abril","Mayo","Junio","Julio","Agosto","Septiembre","Octubre","Noviembre","Diciembre"];
+  var ACTIVITIES = ["Family","School/work","Relationship","Friends/colleagues","Health","Hobbies","Sleep","Relaxing","Exercise"];
+  var EMOTIONS   = ["Happy","Good","Confused/thoughtful","Bored/tired/neutral","Awkward","Stressed","Angry/ pissed","Anxious","Down"];
+
+  var allEntries = [];
+  var currentYear = null;
+  var charts = {};
+
+  // ── IMPORT ─────────────────────────────────────────────
+  document.getElementById("fileInput").addEventListener("change", function(e) {
+    var file = e.target.files[0];
+    if (!file) return;
+    var reader = new FileReader();
+    reader.onload = function(ev) {
+      try {
+        var data = JSON.parse(ev.target.result);
+        if (!Array.isArray(data)) throw new Error("Formato inválido");
+        allEntries = data.filter(function(e) { return e && typeof e.date === "string"; });
+        init();
+      } catch(err) {
+        alert("Error al importar: " + err.message);
+      }
+    };
+    reader.readAsText(file);
+  });
+
+  function init() {
+    var years = getYears();
+    if (!years.length) { alert("No hay entradas válidas"); return; }
+    currentYear = years[years.length - 1]; // más reciente
+    renderYearSelector(years);
+    document.getElementById("headerSub").textContent = allEntries.length + " entradas · " + years.length + " años";
+    renderYear(currentYear);
+  }
+
+  function getYears() {
+    var ys = {};
+    allEntries.forEach(function(e) { ys[e.date.slice(0,4)] = true; });
+    return Object.keys(ys).sort();
+  }
+
+  function renderYearSelector(years) {
+    var sel = document.getElementById("yearSelector");
+    sel.innerHTML = "";
+    years.forEach(function(y) {
+      var btn = document.createElement("button");
+      btn.className = "year-btn" + (y === currentYear ? " active" : "");
+      btn.textContent = y;
+      btn.onclick = function() {
+        currentYear = y;
+        document.querySelectorAll(".year-btn").forEach(function(b) { b.classList.remove("active"); });
+        btn.classList.add("active");
+        renderYear(y);
+      };
+      sel.appendChild(btn);
+    });
+  }
+
+  // ── COMPUTE ────────────────────────────────────────────
+  function entriesForYear(year) {
+    return allEntries.filter(function(e) { return e.date.startsWith(year); });
+  }
+
+  function computeMonthly(year) {
+    var data = [];
+    for (var m = 0; m < 12; m++) {
+      var monthStr = year + "-" + String(m+1).padStart(2,"0");
+      var mes = allEntries.filter(function(e) { return e.date.startsWith(monthStr); });
+      if (!mes.length) { data.push(null); continue; }
+
+      var scores = mes.map(function(e) { return e.score || 0; });
+      var avg = scores.reduce(function(a,b){return a+b;},0) / scores.length;
+      var variance = scores.reduce(function(s,v){var d=v-avg;return s+d*d;},0) / scores.length;
+      var range = Math.max.apply(null,scores) - Math.min.apply(null,scores);
+
+      // total emociones registradas ese mes
+      var totalEmoCount = mes.reduce(function(s,e){return s+(e.emotions||[]).length;},0);
+      var totalActCount = mes.reduce(function(s,e){return s+(e.activities||[]).length;},0);
+
+      // porcentaje: días con esa emoción / total emociones * 100
+      var emoPct = {};
+      EMOTIONS.forEach(function(em) {
+        var days = mes.filter(function(e){return (e.emotions||[]).indexOf(em)>=0;}).length;
+        emoPct[em] = totalEmoCount > 0 ? (days / totalEmoCount) * 100 : 0;
+      });
+      var actPct = {};
+      ACTIVITIES.forEach(function(a) {
+        var days = mes.filter(function(e){return (e.activities||[]).indexOf(a)>=0;}).length;
+        actPct[a] = totalActCount > 0 ? (days / totalActCount) * 100 : 0;
+      });
+
+      // densidad: media de emociones/actividades por día
+      var emoDensity = totalEmoCount / mes.length;
+      var actDensity = totalActCount / mes.length;
+
+      data.push({
+        month: m,
+        n: mes.length,
+        avg: avg,
+        variance: variance,
+        range: range,
+        emoPct: emoPct,
+        actPct: actPct,
+        emoDensity: emoDensity,
+        actDensity: actDensity
+      });
+    }
+    return data;
+  }
+
+  // ── RENDER YEAR ────────────────────────────────────────
+  function renderYear(year) {
+    // destroy old charts
+    Object.keys(charts).forEach(function(k) {
+      try { charts[k].destroy(); } catch(e){}
+    });
+    charts = {};
+
+    var monthly = computeMonthly(year);
+    var yeEntries = entriesForYear(year);
+    var content = document.getElementById("appContent");
+    content.innerHTML = "";
+
+    var main = document.createElement("div");
+    main.className = "main";
+
+    // Summary pills
+    var activeMos = monthly.filter(function(m){return m !== null;});
+    var totalEntries = yeEntries.length;
+    var yearAvg = activeMos.length ? activeMos.reduce(function(s,m){return s+m.avg;},0)/activeMos.length : 0;
+    var yearVar = activeMos.length ? activeMos.reduce(function(s,m){return s+m.variance;},0)/activeMos.length : 0;
+    var bestMo = activeMos.reduce(function(b,m){return m.avg>b.avg?m:b;}, activeMos[0]);
+
+    main.appendChild(makePills([
+      { value: totalEntries, label: "Entradas" },
+      { value: yearAvg.toFixed(2), label: "Ánimo medio" },
+      { value: yearVar.toFixed(2), label: "Varianza media" },
+      { value: bestMo ? MONTHS[bestMo.month] : "-", label: "Mejor mes" }
+    ]));
+
+    // 1. Puntuación media
+    main.appendChild(makeSection("1 · Puntuación media mensual",
+      makeSimpleTable(monthly, "avg", "Media", function(v){return v.toFixed(3);}, true),
+      makeLineChart("chartAvg", monthly, function(m){return m.avg;}, "Ánimo medio", "#c8b560")
+    ));
+
+    // 2. Varianza
+    main.appendChild(makeSection("2 · Varianza mensual",
+      makeSimpleTable(monthly, "variance", "Varianza", function(v){return v.toFixed(3);}, false),
+      makeLineChart("chartVar", monthly, function(m){return m.variance;}, "Varianza", "#6c8ebf")
+    ));
+
+    // 3. Rango
+    main.appendChild(makeSection("3 · Rango mensual",
+      makeSimpleTable(monthly, "range", "Rango", function(v){return v.toFixed(2);}, false),
+      makeLineChart("chartRange", monthly, function(m){return m.range;}, "Rango", "#b56c8e")
+    ));
+
+    // 4. % Emociones
+    main.appendChild(makeMultiSection("4 · Porcentaje de emociones (%)", monthly, EMOTIONS, "emoPct", "#b56c8e", "emo"));
+
+    // 5. % Actividades
+    main.appendChild(makeMultiSection("5 · Porcentaje de actividades (%)", monthly, ACTIVITIES, "actPct", "#6cbf8e", "act"));
+
+    // 6. Densidad emociones
+    main.appendChild(makeSection("6 · Densidad de emociones (media/día)",
+      makeSimpleTable(monthly, "emoDensity", "Densidad", function(v){return v.toFixed(2);}, false),
+      makeLineChart("chartEmoDensity", monthly, function(m){return m.emoDensity;}, "Emociones/día", "#b56c8e")
+    ));
+
+    // 7. Densidad actividades
+    main.appendChild(makeSection("7 · Densidad de actividades (media/día)",
+      makeSimpleTable(monthly, "actDensity", "Densidad", function(v){return v.toFixed(2);}, false),
+      makeLineChart("chartActDensity", monthly, function(m){return m.actDensity;}, "Actividades/día", "#6cbf8e")
+    ));
+
+    content.appendChild(main);
+
+    // render charts after DOM insertion
+    requestAnimationFrame(function() {
+      renderChart("chartAvg", monthly, function(m){return m ? parseFloat(m.avg.toFixed(2)) : null;}, "Ánimo medio", "#c8b560");
+      renderChart("chartVar", monthly, function(m){return m ? parseFloat(m.variance.toFixed(3)) : null;}, "Varianza", "#6c8ebf");
+      renderChart("chartRange", monthly, function(m){return m ? parseFloat(m.range.toFixed(2)) : null;}, "Rango", "#b56c8e");
+      renderChart("chartEmoDensity", monthly, function(m){return m ? parseFloat(m.emoDensity.toFixed(2)) : null;}, "Emociones/día", "#b56c8e");
+      renderChart("chartActDensity", monthly, function(m){return m ? parseFloat(m.actDensity.toFixed(2)) : null;}, "Actividades/día", "#6cbf8e");
+      renderMultiBarChart("chartEmo", monthly, EMOTIONS, "emoPct", "#b56c8e");
+      renderMultiBarChart("chartAct", monthly, ACTIVITIES, "actPct", "#6cbf8e");
+    });
+  }
+
+  // ── UI BUILDERS ────────────────────────────────────────
+  function makePills(items) {
+    var row = document.createElement("div");
+    row.className = "summary-row";
+    items.forEach(function(item) {
+      var pill = document.createElement("div");
+      pill.className = "summary-pill";
+      pill.innerHTML = '<div class="pill-value">' + item.value + '</div><div class="pill-label">' + item.label + '</div>';
+      row.appendChild(pill);
+    });
+    return row;
+  }
+
+  function makeSection(title, tableEl, chartEl) {
+    var wrap = document.createElement("div");
+    var h = document.createElement("div");
+    h.className = "section-title";
+    h.textContent = title;
+    wrap.appendChild(h);
+    var block = document.createElement("div");
+    block.className = "table-chart-block";
+    block.appendChild(tableEl);
+    block.appendChild(chartEl);
+    wrap.appendChild(block);
+    return wrap;
+  }
+
+  function makeMultiSection(title, monthly, items, key, color, chartId) {
+    var wrap = document.createElement("div");
+    var h = document.createElement("div");
+    h.className = "section-title";
+    h.textContent = title;
+    wrap.appendChild(h);
+    var block = document.createElement("div");
+    block.className = "table-chart-block";
+    block.appendChild(makeMultiTable(monthly, items, key));
+    block.appendChild(makeBarChartCard("chart" + chartId.charAt(0).toUpperCase() + chartId.slice(1), title));
+    wrap.appendChild(block);
+    return wrap;
+  }
+
+  function makeSimpleTable(monthly, key, colLabel, fmt, showBar) {
+    var wrap = document.createElement("div");
+    wrap.className = "data-table-wrap";
+    var titleEl = document.createElement("div");
+    titleEl.className = "data-table-title";
+    titleEl.textContent = colLabel + " por mes";
+    wrap.appendChild(titleEl);
+
+    var vals = monthly.map(function(m) { return m ? m[key] : null; });
+    var max = Math.max.apply(null, vals.filter(function(v){return v!==null;})) || 1;
+
+    var table = document.createElement("table");
+    var thead = "<thead><tr><th>Mes</th><th>" + colLabel + "</th><th>N</th>" + (showBar ? "<th>Barra</th>" : "") + "</tr></thead>";
+    table.innerHTML = thead;
+    var tbody = document.createElement("tbody");
+
+    monthly.forEach(function(m, i) {
+      var tr = document.createElement("tr");
+      if (!m) {
+        tr.innerHTML = '<td class="month-col">' + MONTHS[i] + '</td><td class="val muted" colspan="' + (showBar?3:2) + '" style="color:var(--muted)">—</td>';
+      } else {
+        var v = m[key];
+        var barW = max > 0 ? Math.round((v/max)*100) : 0;
+        var barCell = showBar
+          ? '<td class="bar-cell"><div class="mini-bar-bg"><div class="mini-bar-fill" style="width:' + barW + '%"></div></div></td>'
+          : '';
+        tr.innerHTML = '<td class="month-col">' + MONTHS[i] + '</td><td class="val val-accent">' + fmt(v) + '</td><td class="val" style="color:var(--muted)">' + m.n + '</td>' + barCell;
+      }
+      tbody.appendChild(tr);
+    });
+    table.appendChild(tbody);
+    wrap.appendChild(table);
+    return wrap;
+  }
+
+  function makeMultiTable(monthly, items, key) {
+    var wrap = document.createElement("div");
+    wrap.className = "data-table-wrap scroll-x";
+    var titleEl = document.createElement("div");
+    titleEl.className = "data-table-title";
+    titleEl.textContent = "Tabla por mes";
+    wrap.appendChild(titleEl);
+
+    var table = document.createElement("table");
+    table.className = "multi-table";
+
+    // header
+    var hRow = "<thead><tr><th>Mes</th>";
+    items.forEach(function(item) {
+      var short = item.length > 8 ? item.slice(0,8) + "…" : item;
+      hRow += "<th title='" + item + "'>" + short + "</th>";
+    });
+    hRow += "</tr></thead>";
+    table.innerHTML = hRow;
+
+    var tbody = document.createElement("tbody");
+    monthly.forEach(function(m, i) {
+      var tr = document.createElement("tr");
+      if (!m) {
+        var cols = '<td class="month-col">' + MONTHS[i] + '</td>';
+        items.forEach(function() { cols += '<td style="color:var(--muted)">—</td>'; });
+        tr.innerHTML = cols;
+      } else {
+        var cols = '<td class="month-col">' + MONTHS[i] + '</td>';
+        items.forEach(function(item) {
+          var v = m[key][item] || 0;
+          cols += '<td class="val" style="color:var(--txt)">' + v.toFixed(1) + '</td>';
+        });
+        tr.innerHTML = cols;
+      }
+      tbody.appendChild(tr);
+    });
+    table.appendChild(tbody);
+    wrap.appendChild(table);
+    return wrap;
+  }
+
+  function makeLineChart(id, monthly, valFn, label, color) {
+    var card = document.createElement("div");
+    card.className = "chart-card";
+    card.innerHTML = '<div class="chart-card-title">' + label + '</div><div class="chart-wrap"><canvas id="' + id + '"></canvas></div>';
+    return card;
+  }
+
+  function makeBarChartCard(id, label) {
+    var card = document.createElement("div");
+    card.className = "chart-card";
+    card.innerHTML = '<div class="chart-card-title">' + label + '</div><div class="chart-wrap-tall"><canvas id="' + id + '"></canvas></div>';
+    return card;
+  }
+
+  // ── CHART RENDERERS ────────────────────────────────────
+  var CHART_DEFAULTS = {
+    color: "rgba(255,255,255,0.7)",
+    gridColor: "rgba(255,255,255,0.06)",
+    tooltipBg: "rgba(15,15,19,0.95)"
+  };
+
+  function renderChart(id, monthly, valFn, label, color) {
+    var canvas = document.getElementById(id);
+    if (!canvas) return;
+    var ctx = canvas.getContext("2d");
+    var data = monthly.map(valFn);
+    var c = new Chart(ctx, {
+      type: "line",
+      data: {
+        labels: MONTHS,
+        datasets: [{
+          label: label,
+          data: data,
+          borderColor: color,
+          backgroundColor: color + "22",
+          borderWidth: 2.5,
+          fill: true,
+          tension: 0.4,
+          pointRadius: 5,
+          pointBackgroundColor: color,
+          pointBorderColor: "#0f0f13",
+          pointBorderWidth: 2,
+          spanGaps: false
+        }]
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: {
+          legend: { display: false },
+          tooltip: {
+            backgroundColor: CHART_DEFAULTS.tooltipBg,
+            padding: 12,
+            titleColor: "#f0efe8",
+            bodyColor: color,
+            callbacks: {
+              label: function(ctx) { return ctx.parsed.y !== null ? label + ": " + ctx.parsed.y : "Sin datos"; }
+            }
+          }
+        },
+        scales: {
+          x: { grid: { color: CHART_DEFAULTS.gridColor }, ticks: { color: CHART_DEFAULTS.color, font: { size: 11 } } },
+          y: { grid: { color: CHART_DEFAULTS.gridColor }, ticks: { color: CHART_DEFAULTS.color, font: { size: 11 } } }
+        }
+      }
+    });
+    charts[id] = c;
+  }
+
+  function renderMultiBarChart(id, monthly, items, key, baseColor) {
+    var canvas = document.getElementById(id);
+    if (!canvas) return;
+
+    // Paleta de colores para cada item
+    var palette = [
+      "#c8b560","#6c8ebf","#b56c8e","#6cbf8e","#bf8e6c",
+      "#8e6cbf","#6cbfb5","#bf6c6c","#8ebf6c"
+    ];
+
+    var datasets = items.map(function(item, idx) {
+      return {
+        label: item,
+        data: monthly.map(function(m) { return m ? parseFloat((m[key][item]||0).toFixed(1)) : null; }),
+        backgroundColor: palette[idx % palette.length] + "cc",
+        borderColor: palette[idx % palette.length],
+        borderWidth: 1,
+        borderRadius: 3
+      };
+    });
+
+    var c = new Chart(canvas.getContext("2d"), {
+      type: "bar",
+      data: { labels: MONTHS, datasets: datasets },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: {
+          legend: {
+            display: true,
+            position: "bottom",
+            labels: { color: CHART_DEFAULTS.color, font: { size: 10 }, boxWidth: 12, padding: 8 }
+          },
+          tooltip: {
+            backgroundColor: CHART_DEFAULTS.tooltipBg,
+            padding: 10,
+            callbacks: {
+              label: function(ctx) { return ctx.dataset.label + ": " + (ctx.parsed.y !== null ? ctx.parsed.y.toFixed(1) + "%" : "—"); }
+            }
+          }
+        },
+        scales: {
+          x: { stacked: true, grid: { display: false }, ticks: { color: CHART_DEFAULTS.color, font: { size: 11 } } },
+          y: { stacked: true, grid: { color: CHART_DEFAULTS.gridColor }, ticks: { color: CHART_DEFAULTS.color, font: { size: 11 } } }
+        }
+      }
+    });
+    charts[id] = c;
+  }
+
+}());
+</script>
+</body>
+</html>
