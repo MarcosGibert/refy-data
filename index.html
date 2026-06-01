@@ -4,8 +4,6 @@
   <meta charset="utf-8"/>
   <meta name="viewport" content="width=device-width,initial-scale=1"/>
   <title>Journal Stats</title>
-  <link rel="apple-touch-icon" href="icono.png">
-  <link rel="icon" type="image/png" href="icono.png">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=DM+Serif+Display&family=DM+Sans:wght@400;500;600&display=swap" rel="stylesheet">
@@ -205,7 +203,7 @@
     }
     .chart-wrap { position: relative; height: 260px; }
     .chart-wrap-tall { position: relative; height: 320px; }
-    .chart-wrap-ribbon { position: relative; height: 360px; }
+    .chart-wrap-ribbon { position: relative; height: 360px; width: 100%; }
 
     /* heatmap */
     .emotion-heatmap { display: flex; flex-direction: column; gap: 4px; }
@@ -601,7 +599,7 @@
   function makeBarChartCard(id, label) {
     var card = document.createElement("div");
     card.className = "chart-card";
-    card.innerHTML = '<div class="chart-card-title">' + label + '</div><div class="chart-wrap-ribbon"><canvas id="' + id + '"></canvas></div>';
+    card.innerHTML = '<div class="chart-card-title">' + label + '</div><div class="chart-wrap-ribbon" id="wrap_' + id + '"><canvas id="' + id + '"></canvas></div>';
     return card;
   }
 
@@ -663,157 +661,222 @@
   function renderMultiBarChart(id, monthly, items, key, baseColor) {
     var canvas = document.getElementById(id);
     if (!canvas) return;
+    var wrap = document.getElementById("wrap_" + id);
 
     var palette = [
       "#c8b560","#6c8ebf","#b56c8e","#6cbf8e","#bf8e6c",
       "#8e6cbf","#6cbfb5","#bf6c6c","#8ebf6c"
     ];
 
-    // Para cada mes, obtenemos el valor de cada item
-    var numMonths = 12;
+    var PAD_L = 10, PAD_R = 10, PAD_T = 20, PAD_B = 60;
 
-    // Construir matriz [item][mes] con valores
-    var matrix = items.map(function(item) {
-      return monthly.map(function(m) {
-        return m ? (m[key][item] || 0) : null;
+    // Build moData once — reused by draw and hit-test
+    var activeMos = [];
+    monthly.forEach(function(m, mi) { if (m) activeMos.push(mi); });
+    if (activeMos.length < 2) return;
+
+    var moData = activeMos.map(function(mi) {
+      var m = monthly[mi];
+      var vals = items.map(function(item, ii) {
+        return { ii: ii, item: item, v: m[key][item] || 0 };
       });
+      var total = vals.reduce(function(s,x){ return s + x.v; }, 0) || 1;
+      vals.forEach(function(x){ x.n = x.v / total; });
+      // sort DESC: mayor primero → se dibuja desde arriba del canvas
+      vals.sort(function(a, b){ return b.v - a.v; });
+      return { mi: mi, vals: vals, total: total };
     });
 
-    // Para cada mes, calcular el orden de items (mayor a menor)
-    // y las posiciones acumuladas (base y top) de cada item
-    // Generamos un dataset por item con los valores "base" y "top" correctos
-    // Usamos scatter con fill entre líneas no es viable en Chart.js fácilmente.
-    // En su lugar: para cada mes calculamos el stack reordenado y lo metemos
-    // en datasets de tipo line stacked, pero reordenando dinámicamente el stack
-    // usando una técnica de "phantom" datasets.
-
-    // Alternativa: calcular para cada item su acumulado inferior y superior
-    // en cada mes según el orden rank de ese mes, luego dibujar con fill
-    // entre dos líneas (yMin y yMax por mes).
-
-    // Calculamos rank de cada item en cada mes (0 = mayor)
-    // y las posiciones acumuladas
-    var tops  = items.map(function() { return new Array(numMonths).fill(null); });
-    var bases = items.map(function() { return new Array(numMonths).fill(null); });
-
-    for (var mi = 0; mi < numMonths; mi++) {
-      if (!monthly[mi]) continue;
-      // Ordenar items por valor desc en este mes
-      var order = items.map(function(_, ii) { return ii; });
-      order.sort(function(a, b) {
-        return (matrix[b][mi] || 0) - (matrix[a][mi] || 0);
+    function getStackedY(moIdx, chartH) {
+      var d = moData[moIdx];
+      var result = {};
+      var cursor = PAD_T;
+      d.vals.forEach(function(x) {
+        var h = x.n * chartH;
+        result[x.item] = { top: cursor, bot: cursor + h };
+        cursor += h;
       });
-      var acc = 0;
-      order.forEach(function(itemIdx) {
-        var v = matrix[itemIdx][mi] || 0;
-        bases[itemIdx][mi] = acc;
-        tops[itemIdx][mi]  = acc + v;
-        acc += v;
-      });
+      return result;
     }
 
-    // Crear datasets: uno por item, con data = tops y fill hacia bases
-    // Usamos datasets pares: [top_i, base_i, top_i+1, base_i+1 ...]
-    // Chart.js fill: '+1' no funciona bien con reorden. Usamos truco:
-    // dataset[2i]   = top line del item i (fill hacia dataset[2i+1])
-    // dataset[2i+1] = base line del item i (fill: false)
+    // Tooltip state
+    var tooltip = { visible: false, x: 0, y: 0, lines: [] };
 
-    var datasets = [];
-    items.forEach(function(item, idx) {
-      var color = palette[idx % palette.length];
-      var r = parseInt(color.slice(1,3),16);
-      var g = parseInt(color.slice(3,5),16);
-      var b = parseInt(color.slice(5,7),16);
-      var bg   = "rgba(" + r + "," + g + "," + b + ",0.8)";
-      var line = "rgba(" + r + "," + g + "," + b + ",0.0)";
+    function draw() {
+      var W = wrap ? wrap.offsetWidth : 600;
+      var H = 360;
+      canvas.width  = W;
+      canvas.height = H;
+      var ctx = canvas.getContext("2d");
+      var chartW = W - PAD_L - PAD_R;
+      var chartH = H - PAD_T - PAD_B;
 
-      // top line - fills down to base line (next dataset)
-      datasets.push({
-        label: item,
-        data: tops[idx].map(function(v, mi) {
-          return v !== null ? parseFloat(v.toFixed(3)) : null;
-        }),
-        backgroundColor: bg,
-        borderColor: "rgba(" + r + "," + g + "," + b + ",0.9)",
-        borderWidth: 1,
-        fill: "+" + 1,  // fill to next dataset (base line)
-        tension: 0.4,
-        pointRadius: 0,
-        pointHoverRadius: 4,
-        pointHoverBackgroundColor: color,
-        spanGaps: false,
-        _itemIdx: idx
+      var xPos = activeMos.map(function(mi, ci) {
+        return PAD_L + (ci / (activeMos.length - 1)) * chartW;
       });
-      // base line - no fill
-      datasets.push({
-        label: "_base_" + item,
-        data: bases[idx].map(function(v, mi) {
-          return v !== null ? parseFloat(v.toFixed(3)) : null;
-        }),
-        backgroundColor: "transparent",
-        borderColor: "transparent",
-        borderWidth: 0,
-        fill: false,
-        tension: 0.4,
-        pointRadius: 0,
-        spanGaps: false,
-        _isBase: true
-      });
-    });
+      var stacks = moData.map(function(_, ci) { return getStackedY(ci, chartH); });
 
-    var c = new Chart(canvas.getContext("2d"), {
-      type: "line",
-      data: { labels: MONTHS, datasets: datasets },
-      options: {
-        responsive: true,
-        maintainAspectRatio: false,
-        interaction: { mode: "index", intersect: false },
-        plugins: {
-          legend: {
-            display: true,
-            position: "bottom",
-            labels: {
-              color: "rgba(255,255,255,0.7)",
-              font: { size: 10, family: "'DM Sans', sans-serif" },
-              boxWidth: 10, boxHeight: 10, padding: 10,
-              usePointStyle: true, pointStyle: "rect",
-              filter: function(item) { return !item.text.startsWith("_base_"); }
-            }
-          },
-          tooltip: {
-            backgroundColor: CHART_DEFAULTS.tooltipBg,
-            padding: 12,
-            filter: function(item) { return !item.dataset.label.startsWith("_base_"); },
-            callbacks: {
-              label: function(ctx) {
-                if (ctx.dataset.label.startsWith("_base_")) return null;
-                var idx = ctx.dataIndex;
-                var itemIdx = ctx.dataset._itemIdx;
-                var v = matrix[itemIdx][idx];
-                if (v === null) return ctx.dataset.label + ": —";
-                return ctx.dataset.label + ": " + v.toFixed(1) + "%";
-              }
-            }
-          }
-        },
-        scales: {
-          x: {
-            grid: { color: CHART_DEFAULTS.gridColor },
-            ticks: { color: CHART_DEFAULTS.color, font: { size: 11 } }
-          },
-          y: {
-            grid: { color: CHART_DEFAULTS.gridColor },
-            ticks: {
-              color: CHART_DEFAULTS.color,
-              font: { size: 11 },
-              callback: function(v) { return v.toFixed(0) + "%"; }
-            }
-          }
+      // Draw ribbons
+      items.forEach(function(item, ii) {
+        var color = palette[ii % palette.length];
+        var r = parseInt(color.slice(1,3),16);
+        var g = parseInt(color.slice(3,5),16);
+        var b = parseInt(color.slice(5,7),16);
+
+        var topPts = [], botPts = [];
+        stacks.forEach(function(st, ci) {
+          var s = st[item] || { top: PAD_T + chartH/2, bot: PAD_T + chartH/2 };
+          topPts.push({ x: xPos[ci], y: s.top });
+          botPts.push({ x: xPos[ci], y: s.bot });
+        });
+
+        ctx.beginPath();
+        ctx.moveTo(topPts[0].x, topPts[0].y);
+        for (var ci = 0; ci < topPts.length - 1; ci++) {
+          var cpx = (topPts[ci].x + topPts[ci+1].x) / 2;
+          ctx.bezierCurveTo(cpx, topPts[ci].y, cpx, topPts[ci+1].y, topPts[ci+1].x, topPts[ci+1].y);
         }
+        ctx.lineTo(botPts[botPts.length-1].x, botPts[botPts.length-1].y);
+        for (var ci = botPts.length - 2; ci >= 0; ci--) {
+          var cpx = (botPts[ci].x + botPts[ci+1].x) / 2;
+          ctx.bezierCurveTo(cpx, botPts[ci+1].y, cpx, botPts[ci].y, botPts[ci].x, botPts[ci].y);
+        }
+        ctx.closePath();
+        ctx.fillStyle = "rgba(" + r + "," + g + "," + b + ",0.78)";
+        ctx.fill();
+        ctx.strokeStyle = "rgba(" + r + "," + g + "," + b + ",0.95)";
+        ctx.lineWidth = 1;
+        ctx.stroke();
+      });
+
+      // % labels inside ribbons (top 3 at each column)
+      moData.forEach(function(d, ci) {
+        var st = stacks[ci];
+        d.vals.slice(0,3).forEach(function(x) {
+          var s = st[x.item];
+          if (!s) return;
+          var h = s.bot - s.top;
+          if (h < 14 || x.v < 0.5) return;
+          ctx.font = "600 10px 'DM Sans', sans-serif";
+          ctx.fillStyle = "rgba(255,255,255,0.9)";
+          ctx.textAlign = "center";
+          ctx.fillText(x.v.toFixed(0) + "%", xPos[ci], s.top + h/2 + 4);
+        });
+      });
+
+      // Month labels
+      ctx.font = "600 11px 'DM Sans', sans-serif";
+      ctx.fillStyle = "rgba(255,255,255,0.5)";
+      ctx.textAlign = "center";
+      activeMos.forEach(function(mi, ci) {
+        ctx.fillText(MONTHS_FULL[mi], xPos[ci], H - PAD_B + 16);
+      });
+
+      // Legend
+      var legX = PAD_L;
+      var legY = H - 10;
+      ctx.font = "500 10px 'DM Sans', sans-serif";
+      ctx.textAlign = "left";
+      items.forEach(function(item, ii) {
+        var color = palette[ii % palette.length];
+        var r2 = parseInt(color.slice(1,3),16);
+        var g2 = parseInt(color.slice(3,5),16);
+        var b2 = parseInt(color.slice(5,7),16);
+        ctx.fillStyle = "rgba(" + r2 + "," + g2 + "," + b2 + ",0.9)";
+        ctx.fillRect(legX, legY - 8, 10, 10);
+        ctx.fillStyle = "rgba(255,255,255,0.65)";
+        var label = item.length > 12 ? item.slice(0,12) + "\u2026" : item;
+        ctx.fillText(label, legX + 13, legY);
+        legX += ctx.measureText(label).width + 26;
+        if (legX > W - 120) { legX = PAD_L; legY += 14; }
+      });
+
+      // Tooltip overlay
+      if (tooltip.visible) {
+        var tx = tooltip.x, ty = tooltip.y;
+        var tw = 160, th = 14 * tooltip.lines.length + 16;
+        if (tx + tw + 12 > W) tx = tx - tw - 12; else tx = tx + 12;
+        if (ty + th + 8 > H - PAD_B) ty = H - PAD_B - th - 8;
+        ctx.fillStyle = "rgba(15,15,19,0.93)";
+        ctx.beginPath();
+        ctx.roundRect(tx, ty, tw, th, 6);
+        ctx.fill();
+        ctx.font = "600 11px 'DM Sans', sans-serif";
+        ctx.textAlign = "left";
+        tooltip.lines.forEach(function(line, li) {
+          ctx.fillStyle = line.color || "rgba(255,255,255,0.85)";
+          ctx.fillText(line.text, tx + 10, ty + 14 + li * 14);
+        });
       }
+    }
+
+    // Hit test: find which item is at pixel (px, py)
+    function hitTest(px, py, W, H) {
+      var chartH = H - PAD_T - PAD_B;
+      var chartW = W - PAD_L - PAD_R;
+      if (py < PAD_T || py > PAD_T + chartH) return null;
+
+      // Find nearest column
+      var xPos = activeMos.map(function(mi, ci) {
+        return PAD_L + (ci / (activeMos.length - 1)) * chartW;
+      });
+      var bestCi = 0, bestDist = Infinity;
+      xPos.forEach(function(x, ci) {
+        var d = Math.abs(px - x);
+        if (d < bestDist) { bestDist = d; bestCi = ci; }
+      });
+
+      var stacks = moData.map(function(_, ci) { return getStackedY(ci, chartH); });
+      var st = stacks[bestCi];
+      var hitItem = null;
+      items.forEach(function(item) {
+        var s = st[item];
+        if (s && py >= s.top && py <= s.bot) hitItem = item;
+      });
+      return hitItem ? { ci: bestCi, item: hitItem } : null;
+    }
+
+    // Mouse/touch events
+    function onMove(px, py) {
+      var W = canvas.width, H = canvas.height;
+      var hit = hitTest(px, py, W, H);
+      if (hit) {
+        var d = moData[hit.ci];
+        var val = d.vals.find(function(x){ return x.item === hit.item; });
+        var lines = [
+          { text: MONTHS_FULL[activeMos[hit.ci]], color: "rgba(255,255,255,0.5)" },
+          { text: hit.item + ": " + (val ? val.v.toFixed(1) : "0") + "%", color: palette[items.indexOf(hit.item) % palette.length] }
+        ];
+        tooltip = { visible: true, x: px, y: py, lines: lines };
+      } else {
+        tooltip = { visible: false };
+      }
+      draw();
+    }
+
+    function getXY(e, isTouch) {
+      var rect = canvas.getBoundingClientRect();
+      var src = isTouch ? e.touches[0] : e;
+      return { x: src.clientX - rect.left, y: src.clientY - rect.top };
+    }
+
+    canvas.addEventListener("mousemove", function(e) {
+      var p = getXY(e, false); onMove(p.x, p.y);
     });
-    charts[id] = c;
+    canvas.addEventListener("mouseleave", function() {
+      tooltip = { visible: false }; draw();
+    });
+    canvas.addEventListener("touchmove", function(e) {
+      e.preventDefault();
+      var p = getXY(e, true); onMove(p.x, p.y);
+    }, { passive: false });
+    canvas.addEventListener("touchend", function() {
+      tooltip = { visible: false }; draw();
+    });
+
+    draw();
   }
+
 
 }());
 </script>
