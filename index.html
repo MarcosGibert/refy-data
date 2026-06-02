@@ -704,15 +704,34 @@
 
     function draw() {
       var W = wrap ? wrap.offsetWidth : 600;
-      var H = 360;
+      var mobile = W < 480;
+      var tiny   = W < 340;
+
+      var labelFontSz = mobile ? 8  : 11;
+      var pctFontSz   = mobile ? 8  : 10;
+      var legFontSz   = mobile ? 9  : 10;
+      var legSwatchSz = mobile ? 8  : 10;
+      var legGap      = mobile ? 10 : 14;
+      var numLegCols  = tiny ? 2 : (mobile ? 3 : 5);
+      var showPct     = !tiny;
+      var rotateLabels = mobile;
+
+      var legRows = Math.ceil(items.length / numLegCols);
+      var legH    = legRows * (legFontSz + legGap) + 8;
+      var moLabelH = rotateLabels ? 52 : 22;
+
+      var PAD_T2 = 16, PAD_L2 = 6, PAD_R2 = 6;
+      var PAD_B2 = moLabelH + legH + 6;
+      var H = PAD_T2 + 260 + PAD_B2;
+
       canvas.width  = W;
       canvas.height = H;
       var ctx = canvas.getContext("2d");
-      var chartW = W - PAD_L - PAD_R;
-      var chartH = H - PAD_T - PAD_B;
+      var chartW = W - PAD_L2 - PAD_R2;
+      var chartH = H - PAD_T2 - PAD_B2;
 
       var xPos = activeMos.map(function(mi, ci) {
-        return PAD_L + (ci / (activeMos.length - 1)) * chartW;
+        return PAD_L2 + (ci / (activeMos.length - 1)) * chartW;
       });
       var stacks = moData.map(function(_, ci) { return getStackedY(ci, chartH); });
 
@@ -725,7 +744,7 @@
 
         var topPts = [], botPts = [];
         stacks.forEach(function(st, ci) {
-          var s = st[item] || { top: PAD_T + chartH/2, bot: PAD_T + chartH/2 };
+          var s = st[item] || { top: PAD_T2 + chartH/2, bot: PAD_T2 + chartH/2 };
           topPts.push({ x: xPos[ci], y: s.top });
           botPts.push({ x: xPos[ci], y: s.bot });
         });
@@ -749,54 +768,73 @@
         ctx.stroke();
       });
 
-      // % labels inside ribbons (top 3 at each column)
-      moData.forEach(function(d, ci) {
-        var st = stacks[ci];
-        d.vals.slice(0,3).forEach(function(x) {
-          var s = st[x.item];
-          if (!s) return;
-          var h = s.bot - s.top;
-          if (h < 14 || x.v < 0.5) return;
-          ctx.font = "600 10px 'DM Sans', sans-serif";
-          ctx.fillStyle = "rgba(255,255,255,0.9)";
-          ctx.textAlign = "center";
-          ctx.fillText(x.v.toFixed(0) + "%", xPos[ci], s.top + h/2 + 4);
+      // % labels inside ribbons
+      if (showPct) {
+        moData.forEach(function(d, ci) {
+          var st = stacks[ci];
+          var minH = mobile ? 18 : 14;
+          d.vals.slice(0, mobile ? 2 : 3).forEach(function(x) {
+            var s = st[x.item];
+            if (!s) return;
+            var h = s.bot - s.top;
+            if (h < minH || x.v < 1) return;
+            ctx.font = "600 " + pctFontSz + "px 'DM Sans', sans-serif";
+            ctx.fillStyle = "rgba(255,255,255,0.9)";
+            ctx.textAlign = "center";
+            ctx.fillText(x.v.toFixed(0) + "%", xPos[ci], s.top + h/2 + 4);
+          });
         });
-      });
+      }
 
       // Month labels
-      ctx.font = "600 11px 'DM Sans', sans-serif";
-      ctx.fillStyle = "rgba(255,255,255,0.5)";
-      ctx.textAlign = "center";
+      ctx.fillStyle = "rgba(255,255,255,0.55)";
+      var moY = PAD_T2 + chartH + 4;
       activeMos.forEach(function(mi, ci) {
-        ctx.fillText(MONTHS_FULL[mi], xPos[ci], H - PAD_B + 16);
+        var label = rotateLabels ? MONTHS[mi] : MONTHS_FULL[mi];
+        ctx.font = "600 " + labelFontSz + "px 'DM Sans', sans-serif";
+        ctx.save();
+        if (rotateLabels) {
+          ctx.translate(xPos[ci], moY + 6);
+          ctx.rotate(-Math.PI / 3);
+          ctx.textAlign = "right";
+          ctx.fillStyle = "rgba(255,255,255,0.55)";
+          ctx.fillText(label, 0, 0);
+        } else {
+          ctx.textAlign = "center";
+          ctx.fillText(label, xPos[ci], moY + 14);
+        }
+        ctx.restore();
       });
 
-      // Legend
-      var legX = PAD_L;
-      var legY = H - 10;
-      ctx.font = "500 10px 'DM Sans', sans-serif";
-      ctx.textAlign = "left";
+      // Legend (responsive grid)
+      var legStartY = PAD_T2 + chartH + moLabelH + 10;
+      var colW = Math.floor(W / numLegCols);
+      ctx.font = "500 " + legFontSz + "px 'DM Sans', sans-serif";
       items.forEach(function(item, ii) {
+        var col = ii % numLegCols;
+        var row = Math.floor(ii / numLegCols);
+        var lx = col * colW + 6;
+        var ly = legStartY + row * (legFontSz + legGap);
         var color = palette[ii % palette.length];
         var r2 = parseInt(color.slice(1,3),16);
         var g2 = parseInt(color.slice(3,5),16);
         var b2 = parseInt(color.slice(5,7),16);
         ctx.fillStyle = "rgba(" + r2 + "," + g2 + "," + b2 + ",0.9)";
-        ctx.fillRect(legX, legY - 8, 10, 10);
+        ctx.fillRect(lx, ly - legSwatchSz + 2, legSwatchSz, legSwatchSz);
         ctx.fillStyle = "rgba(255,255,255,0.65)";
-        var label = item.length > 12 ? item.slice(0,12) + "\u2026" : item;
-        ctx.fillText(label, legX + 13, legY);
-        legX += ctx.measureText(label).width + 26;
-        if (legX > W - 120) { legX = PAD_L; legY += 14; }
+        ctx.textAlign = "left";
+        var maxChars = tiny ? 10 : (mobile ? 13 : 16);
+        var label = item.length > maxChars ? item.slice(0, maxChars) + "…" : item;
+        ctx.fillText(label, lx + legSwatchSz + 4, ly);
       });
 
-      // Tooltip overlay
+      // Tooltip
       if (tooltip.visible) {
         var tx = tooltip.x, ty = tooltip.y;
-        var tw = 160, th = 14 * tooltip.lines.length + 16;
+        var tw = mobile ? 130 : 160;
+        var th = 14 * tooltip.lines.length + 16;
         if (tx + tw + 12 > W) tx = tx - tw - 12; else tx = tx + 12;
-        if (ty + th + 8 > H - PAD_B) ty = H - PAD_B - th - 8;
+        if (ty + th + 8 > PAD_T2 + chartH) ty = PAD_T2 + chartH - th - 8;
         ctx.fillStyle = "rgba(15,15,19,0.93)";
         ctx.beginPath();
         ctx.roundRect(tx, ty, tw, th, 6);
@@ -812,13 +850,18 @@
 
     // Hit test: find which item is at pixel (px, py)
     function hitTest(px, py, W, H) {
-      var chartH = H - PAD_T - PAD_B;
-      var chartW = W - PAD_L - PAD_R;
-      if (py < PAD_T || py > PAD_T + chartH) return null;
+      var mobile = W < 480;
+      var legRows = Math.ceil(items.length / (W < 340 ? 2 : (mobile ? 3 : 99)));
+      var legH = legRows * (mobile ? 19 : 24) + 8;
+      var moLabelH = mobile ? 52 : 22;
+      var PAD_T2 = 16, PAD_L2 = 6, PAD_R2 = 6;
+      var PAD_B2 = moLabelH + legH + 6;
+      var chartH = H - PAD_T2 - PAD_B2;
+      var chartW = W - PAD_L2 - PAD_R2;
+      if (py < PAD_T2 || py > PAD_T2 + chartH) return null;
 
-      // Find nearest column
       var xPos = activeMos.map(function(mi, ci) {
-        return PAD_L + (ci / (activeMos.length - 1)) * chartW;
+        return PAD_L2 + (ci / (activeMos.length - 1)) * chartW;
       });
       var bestCi = 0, bestDist = Infinity;
       xPos.forEach(function(x, ci) {
