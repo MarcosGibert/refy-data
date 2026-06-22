@@ -30,18 +30,6 @@ Refy Data is a companion dashboard for Refy Journal. It imports journal JSON exp
 - JavaScript
 - [Chart.js](https://www.chartjs.org/) for charts
 
-## Running Locally
-
-Open `index.html` in a browser, or serve the folder locally:
-
-```bash
-python3 -m http.server 8000
-```
-
-Then visit `http://localhost:8000`.
-
-Because the dashboard loads Chart.js from a CDN, an internet connection is required for charts to render.
-
 ## Data Model
 
 The dashboard accepts:
