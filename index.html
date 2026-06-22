@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="es">
+<html lang="en">
 <head>
   <meta charset="utf-8"/>
   <meta name="viewport" content="width=device-width,initial-scale=1"/>
@@ -245,20 +245,19 @@
 <div class="header">
   <div class="header-left">
     <h1>Journal Stats</h1>
-    <p id="headerSub">Importa tu diario para empezar</p>
+    <p id="headerSub">Import your journal to get started</p>
   </div>
   <div class="header-right">
     <div class="year-selector" id="yearSelector"></div>
     <input type="file" id="fileInput" accept=".json">
-    <button class="btn primary" onclick="document.getElementById('fileInput').click()">📂 Importar JSON</button>
+    <button class="btn primary" onclick="document.getElementById('fileInput').click()">Import JSON</button>
   </div>
 </div>
 
 <div id="appContent">
   <div class="empty-state">
-    <div class="icon">📊</div>
-    <h2>Sin datos</h2>
-    <p>Importa el JSON exportado desde tu diario para visualizar los resúmenes anuales.</p>
+    <h2>No data yet</h2>
+    <p>Import the JSON exported from Refy Journal to visualize yearly summaries.</p>
   </div>
 </div>
 
@@ -266,15 +265,119 @@
 (function() {
   "use strict";
 
-  var MONTHS = ["Ene","Feb","Mar","Abr","May","Jun","Jul","Ago","Sep","Oct","Nov","Dic"];
-  var MONTHS_FULL = ["Enero","Febrero","Marzo","Abril","Mayo","Junio","Julio","Agosto","Septiembre","Octubre","Noviembre","Diciembre"];
-  var ACTIVITIES = ["Family","School/work","Relationship","Friends/colleagues","Health","Hobbies","Sleep","Relaxing","Exercise"];
-  var EMOTIONS   = ["Happy","Good","Confused/thoughtful","Bored/tired/neutral","Awkward","Stressed","Angry/ pissed","Anxious","Down"];
+  var MONTHS = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+  var MONTHS_FULL = ["January","February","March","April","May","June","July","August","September","October","November","December"];
+
+  var ACTIVITY_MIGRATIONS = {
+    "School/work": ["School", "Work"],
+    "Relationship": ["Relationships"],
+    "Friends/colleagues": ["Friends", "Colleagues"],
+    "Relaxing": ["Rest"]
+  };
+  var EMOTION_MIGRATIONS = {
+    "Good": ["Content"],
+    "Confused/thoughtful": ["Confused", "Thoughtful"],
+    "Bored/tired/neutral": ["Bored", "Tired", "Neutral"],
+    "Angry/ pissed": ["Angry", "Irritated"]
+  };
 
   var STORAGE_KEY = "journal-stats:v1";
   var allEntries = [];
+  var importedActivities = [];
+  var importedEmotions = [];
   var currentYear = null;
   var charts = {};
+
+  function uniqueClean(list) {
+    var seen = {};
+    var out = [];
+    (list || []).forEach(function(item) {
+      var clean = String(item || "").trim();
+      if (!clean || seen[clean.toLowerCase()]) return;
+      seen[clean.toLowerCase()] = true;
+      out.push(clean);
+    });
+    return out;
+  }
+
+  function migrateTagList(list, migrations) {
+    var out = [];
+    (list || []).forEach(function(tag) {
+      var mapped = migrations[tag];
+      if (mapped) out = out.concat(mapped);
+      else out.push(tag);
+    });
+    return uniqueClean(out);
+  }
+
+  function normalizeEntry(entry) {
+    return {
+      date: String(entry.date || ""),
+      title: String(entry.title || ""),
+      text: String(entry.text || ""),
+      score: Number(entry.score || 0),
+      activities: migrateTagList(entry.activities || [], ACTIVITY_MIGRATIONS),
+      emotions: migrateTagList(entry.emotions || [], EMOTION_MIGRATIONS)
+    };
+  }
+
+  function normalizeEntries(list) {
+    return (Array.isArray(list) ? list : [])
+      .filter(function(e) { return e && typeof e.date === "string" && e.date.length >= 10; })
+      .map(normalizeEntry)
+      .sort(function(a, b) { return a.date.localeCompare(b.date); });
+  }
+
+  function parseImportPayload(data) {
+    if (Array.isArray(data)) {
+      return {
+        entries: normalizeEntries(data),
+        activities: [],
+        emotions: []
+      };
+    }
+    if (data && Array.isArray(data.entries)) {
+      return {
+        entries: normalizeEntries(data.entries),
+        activities: migrateTagList(data.activities || [], ACTIVITY_MIGRATIONS),
+        emotions: migrateTagList(data.emotions || [], EMOTION_MIGRATIONS)
+      };
+    }
+    throw new Error("Invalid journal export.");
+  }
+
+  function uniqueTagsFromEntries(list, field) {
+    var out = [];
+    var seen = {};
+    (list || []).forEach(function(entry) {
+      (entry[field] || []).forEach(function(tag) {
+        var clean = String(tag || "").trim();
+        if (!clean || seen[clean.toLowerCase()]) return;
+        seen[clean.toLowerCase()] = true;
+        out.push(clean);
+      });
+    });
+    return out.sort(function(a, b) { return a.localeCompare(b); });
+  }
+
+  function tagsForEntries(list, field, importedTags) {
+    var activeInPeriod = uniqueTagsFromEntries(list, field);
+    var imported = uniqueClean(importedTags || []);
+    var used = {};
+    activeInPeriod.forEach(function(tag) { used[tag.toLowerCase()] = true; });
+    var labels = activeInPeriod.slice();
+
+    // Include imported active tags only if they appear somewhere in the full dataset.
+    imported.forEach(function(tag) {
+      if (used[tag.toLowerCase()]) return;
+      var appears = allEntries.some(function(entry) {
+        return (entry[field] || []).some(function(x) { return x.toLowerCase() === tag.toLowerCase(); });
+      });
+      if (appears) labels.push(tag);
+    });
+
+    return uniqueClean(labels).sort(function(a, b) { return a.localeCompare(b); });
+  }
 
   // ── IMPORT ─────────────────────────────────────────────
   document.getElementById("fileInput").addEventListener("change", function(e) {
@@ -284,13 +387,23 @@
     reader.onload = function(ev) {
       try {
         var data = JSON.parse(ev.target.result);
-        if (!Array.isArray(data)) throw new Error("Formato inválido");
-        allEntries = data.filter(function(e) { return e && typeof e.date === "string"; });
-        try { localStorage.setItem(STORAGE_KEY, JSON.stringify(allEntries)); } catch(se) {}
+        var parsed = parseImportPayload(data);
+        allEntries = parsed.entries;
+        importedActivities = parsed.activities;
+        importedEmotions = parsed.emotions;
+        try {
+          localStorage.setItem(STORAGE_KEY, JSON.stringify({
+            version: 2,
+            entries: allEntries,
+            activities: importedActivities,
+            emotions: importedEmotions
+          }));
+        } catch(se) {}
         init();
       } catch(err) {
-        alert("Error al importar: " + err.message);
+        alert("Could not import JSON: " + err.message);
       }
+      e.target.value = "";
     };
     reader.readAsText(file);
   });
@@ -301,8 +414,11 @@
       var raw = localStorage.getItem(STORAGE_KEY);
       if (raw) {
         var data = JSON.parse(raw);
-        if (Array.isArray(data) && data.length > 0) {
-          allEntries = data.filter(function(e) { return e && typeof e.date === "string"; });
+        var parsed = parseImportPayload(data);
+        if (parsed.entries.length > 0) {
+          allEntries = parsed.entries;
+          importedActivities = parsed.activities;
+          importedEmotions = parsed.emotions;
           init();
         }
       }
@@ -311,10 +427,10 @@
 
   function init() {
     var years = getYears();
-    if (!years.length) { alert("No hay entradas válidas"); return; }
-    currentYear = years[years.length - 1]; // más reciente
+    if (!years.length) { alert("No valid entries found."); return; }
+    currentYear = years[years.length - 1]; // most recent
     renderYearSelector(years);
-    document.getElementById("headerSub").textContent = allEntries.length + " entradas · " + years.length + " años";
+    document.getElementById("headerSub").textContent = allEntries.length + " entries · " + years.length + " years";
     renderYear(currentYear);
   }
 
@@ -346,41 +462,38 @@
     return allEntries.filter(function(e) { return e.date.startsWith(year); });
   }
 
-  function computeMonthly(year) {
+  function computeMonthly(year, activityLabels, emotionLabels) {
     var data = [];
     for (var m = 0; m < 12; m++) {
       var monthStr = year + "-" + String(m+1).padStart(2,"0");
-      var mes = allEntries.filter(function(e) { return e.date.startsWith(monthStr); });
-      if (!mes.length) { data.push(null); continue; }
+      var monthEntries = allEntries.filter(function(e) { return e.date.startsWith(monthStr); });
+      if (!monthEntries.length) { data.push(null); continue; }
 
-      var scores = mes.map(function(e) { return e.score || 0; });
+      var scores = monthEntries.map(function(e) { return e.score || 0; });
       var avg = scores.reduce(function(a,b){return a+b;},0) / scores.length;
       var variance = scores.reduce(function(s,v){var d=v-avg;return s+d*d;},0) / scores.length;
       var range = Math.max.apply(null,scores) - Math.min.apply(null,scores);
 
-      // total emociones registradas ese mes
-      var totalEmoCount = mes.reduce(function(s,e){return s+(e.emotions||[]).length;},0);
-      var totalActCount = mes.reduce(function(s,e){return s+(e.activities||[]).length;},0);
+      var totalEmoCount = monthEntries.reduce(function(s,e){return s+(e.emotions||[]).length;},0);
+      var totalActCount = monthEntries.reduce(function(s,e){return s+(e.activities||[]).length;},0);
 
-      // porcentaje: días con esa emoción / total emociones * 100
       var emoPct = {};
-      EMOTIONS.forEach(function(em) {
-        var days = mes.filter(function(e){return (e.emotions||[]).indexOf(em)>=0;}).length;
+      emotionLabels.forEach(function(em) {
+        var days = monthEntries.filter(function(e){return (e.emotions||[]).indexOf(em)>=0;}).length;
         emoPct[em] = totalEmoCount > 0 ? (days / totalEmoCount) * 100 : 0;
       });
       var actPct = {};
-      ACTIVITIES.forEach(function(a) {
-        var days = mes.filter(function(e){return (e.activities||[]).indexOf(a)>=0;}).length;
+      activityLabels.forEach(function(a) {
+        var days = monthEntries.filter(function(e){return (e.activities||[]).indexOf(a)>=0;}).length;
         actPct[a] = totalActCount > 0 ? (days / totalActCount) * 100 : 0;
       });
 
-      // densidad: media de emociones/actividades por día
-      var emoDensity = totalEmoCount / mes.length;
-      var actDensity = totalActCount / mes.length;
+      var emoDensity = totalEmoCount / monthEntries.length;
+      var actDensity = totalActCount / monthEntries.length;
 
       data.push({
         month: m,
-        n: mes.length,
+        n: monthEntries.length,
         avg: avg,
         variance: variance,
         range: range,
@@ -401,8 +514,10 @@
     });
     charts = {};
 
-    var monthly = computeMonthly(year);
     var yeEntries = entriesForYear(year);
+    var activityLabels = tagsForEntries(yeEntries, "activities", importedActivities);
+    var emotionLabels = tagsForEntries(yeEntries, "emotions", importedEmotions);
+    var monthly = computeMonthly(year, activityLabels, emotionLabels);
     var content = document.getElementById("appContent");
     content.innerHTML = "";
 
@@ -417,59 +532,52 @@
     var bestMo = activeMos.reduce(function(b,m){return m.avg>b.avg?m:b;}, activeMos[0]);
 
     main.appendChild(makePills([
-      { value: totalEntries, label: "Entradas" },
-      { value: yearAvg.toFixed(2), label: "Ánimo medio" },
-      { value: yearVar.toFixed(2), label: "Varianza media" },
-      { value: bestMo ? MONTHS[bestMo.month] : "-", label: "Mejor mes" }
+      { value: totalEntries, label: "Entries" },
+      { value: yearAvg.toFixed(2), label: "Average mood" },
+      { value: yearVar.toFixed(2), label: "Average variance" },
+      { value: bestMo ? MONTHS[bestMo.month] : "-", label: "Best month" }
     ]));
 
-    // 1. Puntuación media
-    main.appendChild(makeSection("1 · Puntuación media mensual",
-      makeSimpleTable(monthly, "avg", "Media", function(v){return v.toFixed(3);}, true),
-      makeLineChart("chartAvg", monthly, function(m){return m.avg;}, "Ánimo medio", "#c8b560")
+    main.appendChild(makeSection("1 · Monthly average mood",
+      makeSimpleTable(monthly, "avg", "Average", function(v){return v.toFixed(3);}, true),
+      makeLineChart("chartAvg", monthly, function(m){return m.avg;}, "Average mood", "#c8b560")
     ));
 
-    // 2. Varianza
-    main.appendChild(makeSection("2 · Varianza mensual",
-      makeSimpleTable(monthly, "variance", "Varianza", function(v){return v.toFixed(3);}, false),
-      makeLineChart("chartVar", monthly, function(m){return m.variance;}, "Varianza", "#6c8ebf")
+    main.appendChild(makeSection("2 · Monthly variance",
+      makeSimpleTable(monthly, "variance", "Variance", function(v){return v.toFixed(3);}, false),
+      makeLineChart("chartVar", monthly, function(m){return m.variance;}, "Variance", "#6c8ebf")
     ));
 
-    // 3. Rango
-    main.appendChild(makeSection("3 · Rango mensual",
-      makeSimpleTable(monthly, "range", "Rango", function(v){return v.toFixed(2);}, false),
-      makeLineChart("chartRange", monthly, function(m){return m.range;}, "Rango", "#b56c8e")
+    main.appendChild(makeSection("3 · Monthly score range",
+      makeSimpleTable(monthly, "range", "Range", function(v){return v.toFixed(2);}, false),
+      makeLineChart("chartRange", monthly, function(m){return m.range;}, "Range", "#b56c8e")
     ));
 
-    // 4. % Emociones
-    main.appendChild(makeMultiSection("4 · Porcentaje de emociones (%)", monthly, EMOTIONS, "emoPct", "#b56c8e", "emo"));
+    main.appendChild(makeMultiSection("4 · Emotion share (%)", monthly, emotionLabels, "emoPct", "#b56c8e", "emo"));
 
-    // 5. % Actividades
-    main.appendChild(makeMultiSection("5 · Porcentaje de actividades (%)", monthly, ACTIVITIES, "actPct", "#6cbf8e", "act"));
+    main.appendChild(makeMultiSection("5 · Activity share (%)", monthly, activityLabels, "actPct", "#6cbf8e", "act"));
 
-    // 6. Densidad emociones
-    main.appendChild(makeSection("6 · Densidad de emociones (media/día)",
-      makeSimpleTable(monthly, "emoDensity", "Densidad", function(v){return v.toFixed(2);}, false),
-      makeLineChart("chartEmoDensity", monthly, function(m){return m.emoDensity;}, "Emociones/día", "#b56c8e")
+    main.appendChild(makeSection("6 · Emotion density (average/day)",
+      makeSimpleTable(monthly, "emoDensity", "Density", function(v){return v.toFixed(2);}, false),
+      makeLineChart("chartEmoDensity", monthly, function(m){return m.emoDensity;}, "Emotions/day", "#b56c8e")
     ));
 
-    // 7. Densidad actividades
-    main.appendChild(makeSection("7 · Densidad de actividades (media/día)",
-      makeSimpleTable(monthly, "actDensity", "Densidad", function(v){return v.toFixed(2);}, false),
-      makeLineChart("chartActDensity", monthly, function(m){return m.actDensity;}, "Actividades/día", "#6cbf8e")
+    main.appendChild(makeSection("7 · Activity density (average/day)",
+      makeSimpleTable(monthly, "actDensity", "Density", function(v){return v.toFixed(2);}, false),
+      makeLineChart("chartActDensity", monthly, function(m){return m.actDensity;}, "Activities/day", "#6cbf8e")
     ));
 
     content.appendChild(main);
 
     // render charts after DOM insertion
     requestAnimationFrame(function() {
-      renderChart("chartAvg", monthly, function(m){return m ? parseFloat(m.avg.toFixed(2)) : null;}, "Ánimo medio", "#c8b560");
-      renderChart("chartVar", monthly, function(m){return m ? parseFloat(m.variance.toFixed(3)) : null;}, "Varianza", "#6c8ebf");
-      renderChart("chartRange", monthly, function(m){return m ? parseFloat(m.range.toFixed(2)) : null;}, "Rango", "#b56c8e");
-      renderChart("chartEmoDensity", monthly, function(m){return m ? parseFloat(m.emoDensity.toFixed(2)) : null;}, "Emociones/día", "#b56c8e");
-      renderChart("chartActDensity", monthly, function(m){return m ? parseFloat(m.actDensity.toFixed(2)) : null;}, "Actividades/día", "#6cbf8e");
-      renderMultiBarChart("chartEmo", monthly, EMOTIONS, "emoPct", "#b56c8e");
-      renderMultiBarChart("chartAct", monthly, ACTIVITIES, "actPct", "#6cbf8e");
+      renderChart("chartAvg", monthly, function(m){return m ? parseFloat(m.avg.toFixed(2)) : null;}, "Average mood", "#c8b560");
+      renderChart("chartVar", monthly, function(m){return m ? parseFloat(m.variance.toFixed(3)) : null;}, "Variance", "#6c8ebf");
+      renderChart("chartRange", monthly, function(m){return m ? parseFloat(m.range.toFixed(2)) : null;}, "Range", "#b56c8e");
+      renderChart("chartEmoDensity", monthly, function(m){return m ? parseFloat(m.emoDensity.toFixed(2)) : null;}, "Emotions/day", "#b56c8e");
+      renderChart("chartActDensity", monthly, function(m){return m ? parseFloat(m.actDensity.toFixed(2)) : null;}, "Activities/day", "#6cbf8e");
+      renderMultiBarChart("chartEmo", monthly, emotionLabels, "emoPct", "#b56c8e");
+      renderMultiBarChart("chartAct", monthly, activityLabels, "actPct", "#6cbf8e");
     });
   }
 
@@ -519,14 +627,14 @@
     wrap.className = "data-table-wrap";
     var titleEl = document.createElement("div");
     titleEl.className = "data-table-title";
-    titleEl.textContent = colLabel + " por mes";
+    titleEl.textContent = colLabel + " by month";
     wrap.appendChild(titleEl);
 
     var vals = monthly.map(function(m) { return m ? m[key] : null; });
     var max = Math.max.apply(null, vals.filter(function(v){return v!==null;})) || 1;
 
     var table = document.createElement("table");
-    var thead = "<thead><tr><th>Mes</th><th>" + colLabel + "</th><th>N</th>" + (showBar ? "<th>Barra</th>" : "") + "</tr></thead>";
+    var thead = "<thead><tr><th>Month</th><th>" + colLabel + "</th><th>N</th>" + (showBar ? "<th>Bar</th>" : "") + "</tr></thead>";
     table.innerHTML = thead;
     var tbody = document.createElement("tbody");
 
@@ -554,14 +662,24 @@
     wrap.className = "data-table-wrap scroll-x";
     var titleEl = document.createElement("div");
     titleEl.className = "data-table-title";
-    titleEl.textContent = "Tabla por mes";
+    titleEl.textContent = "Table by month";
     wrap.appendChild(titleEl);
+
+    if (!items.length) {
+      var empty = document.createElement("div");
+      empty.style.padding = "24px";
+      empty.style.color = "var(--muted)";
+      empty.style.fontSize = "13px";
+      empty.textContent = "No tags found for this year.";
+      wrap.appendChild(empty);
+      return wrap;
+    }
 
     var table = document.createElement("table");
     table.className = "multi-table";
 
     // header
-    var hRow = "<thead><tr><th>Mes</th>";
+    var hRow = "<thead><tr><th>Month</th>";
     items.forEach(function(item) {
       var short = item.length > 8 ? item.slice(0,8) + "…" : item;
       hRow += "<th title='" + item + "'>" + short + "</th>";
@@ -647,7 +765,7 @@
             titleColor: "#f0efe8",
             bodyColor: color,
             callbacks: {
-              label: function(ctx) { return ctx.parsed.y !== null ? label + ": " + ctx.parsed.y : "Sin datos"; }
+              label: function(ctx) { return ctx.parsed.y !== null ? label + ": " + ctx.parsed.y : "No data"; }
             }
           }
         },
@@ -675,7 +793,17 @@
     // Build moData once — reused by draw and hit-test
     var activeMos = [];
     monthly.forEach(function(m, mi) { if (m) activeMos.push(mi); });
-    if (activeMos.length < 2) return;
+    if (activeMos.length < 1 || items.length < 1) {
+      var ctxEmpty = canvas.getContext("2d");
+      var WEmpty = wrap ? wrap.offsetWidth : 600;
+      canvas.width = WEmpty;
+      canvas.height = 220;
+      ctxEmpty.fillStyle = "rgba(255,255,255,0.45)";
+      ctxEmpty.font = "600 13px 'DM Sans', sans-serif";
+      ctxEmpty.textAlign = "center";
+      ctxEmpty.fillText("No tag data for this year", WEmpty / 2, 110);
+      return;
+    }
 
     var moData = activeMos.map(function(mi) {
       var m = monthly[mi];
@@ -733,7 +861,9 @@
       var chartH = H - PAD_T2 - PAD_B2;
 
       var xPos = activeMos.map(function(mi, ci) {
-        return PAD_L2 + (ci / (activeMos.length - 1)) * chartW;
+        return activeMos.length === 1
+          ? PAD_L2 + chartW / 2
+          : PAD_L2 + (ci / (activeMos.length - 1)) * chartW;
       });
       var stacks = moData.map(function(_, ci) { return getStackedY(ci, chartH); });
 
@@ -863,7 +993,9 @@
       if (py < PAD_T2 || py > PAD_T2 + chartH) return null;
 
       var xPos = activeMos.map(function(mi, ci) {
-        return PAD_L2 + (ci / (activeMos.length - 1)) * chartW;
+        return activeMos.length === 1
+          ? PAD_L2 + chartW / 2
+          : PAD_L2 + (ci / (activeMos.length - 1)) * chartW;
       });
       var bestCi = 0, bestDist = Infinity;
       xPos.forEach(function(x, ci) {
